@@ -18,6 +18,7 @@ let globalServices = {}, globalForms = {}, globalCategories = {};
 let fakeSettings = { base: 0, auto: false }, realOrderCount = 0;
 let activeChat = null, chatTimerInterval = null, maintInterval = null, orderStatusListener = null;
 let activeCategory = "All";
+let globalNoticeData = null; 
 
 // --- THEME ---
 window.toggleTheme = () => {
@@ -56,7 +57,6 @@ onValue(ref(db, 'settings'), (s) => {
     globalServices = data.services_list || {};
     globalForms = data.service_forms || {};
     
-    // Only render if elements exist (Handles Services Page vs Home Page)
     if(document.getElementById('category-bar')) renderCategories();
     if(document.getElementById('dynamic-services-grid')) renderServiceGrid();
 
@@ -68,19 +68,15 @@ onValue(ref(db, 'settings'), (s) => {
         else marqueeBar.style.display = 'none';
     }
 
-    const popup = document.getElementById('notice-modal');
-    if(popup && data.popup_notice) {
-        if(data.popup_notice.active === true && data.popup_notice.text) {
-            document.getElementById('notice-text').innerText = data.popup_notice.text;
-            popup.style.display = 'flex';
-        } else { popup.style.display = 'none'; }
+    if(data.popup_notice) {
+        globalNoticeData = data.popup_notice;
+        attemptShowNotice(); 
     }
 
     const overlay = document.getElementById('system-overlay');
     const container = document.querySelector('.app-container');
     if(maintInterval) clearInterval(maintInterval);
     
-    // Check Status Logic
     if (!data.system_status || data.system_status === 'active') {
         if(overlay) overlay.style.display = 'none';
         if(container) container.style.filter = 'none';
@@ -89,39 +85,23 @@ onValue(ref(db, 'settings'), (s) => {
         if(overlay) {
             overlay.style.display = 'flex';
             const icon = document.getElementById('sys-icon'), title = document.getElementById('sys-title'), desc = document.getElementById('sys-desc'), cd = document.getElementById('sys-countdown');
-            
-            // Reset contents
             if(cd) cd.style.display = 'none';
             if(desc) desc.innerHTML = "";
-
             if (data.system_status === 'off') {
                 if(icon) icon.innerHTML = '<i class="fas fa-power-off" style="color:#ef4444;"></i>'; 
                 if(title) title.innerText = "System Offline"; 
-                const defMsg = "বর্তমানে আমাদের সিস্টেমে নিরাপত্তা আপডেটের কাজ চলমান রয়েছে। অনুগ্রহ করে আমাদের সাথে থাকুন ও ধৈর্য ধারণ করুন।\n\nকাজ সম্পন্ন হলে সিস্টেম স্বয়ংক্রিয়ভাবে স্বাভাবিক অবস্থায় ফিরে আসবে, ইনশা আল্লাহ।\n\nআপনাদের সহযোগিতার জন্য ধন্যবাদ।";
+                const defMsg = "সিস্টেম অফলাইন।";
                 if(desc) desc.innerText = data.off_message || defMsg; 
                 desc.style.whiteSpace = "pre-line";
-            } 
-            else if (data.system_status === 'maintenance') {
+            } else if (data.system_status === 'maintenance') {
                 if(icon) icon.innerHTML = '<i class="fas fa-tools pulse-anim" style="color:#f59e0b;"></i>'; 
                 if(title) title.innerText = "System Maintenance";
-                
-                if (data.maint_message && desc) {
-                   desc.innerHTML = `<b style="color:#fbbf24; white-space: pre-line;">${data.maint_message}</b>`;
-                } else if(desc) {
-                   desc.innerHTML = "We are updating our servers.";
-                }
-
+                if (data.maint_message && desc) { desc.innerHTML = `<b style="color:#fbbf24; white-space: pre-line;">${data.maint_message}</b>`; } 
+                else if(desc) { desc.innerHTML = "Maintenance Mode."; }
                 if (data.maint_end_ts) {
                     if(cd) {
                         cd.style.display = 'flex';
-                        const runTimer = () => { 
-                            const diff = (data.maint_end_ts || Date.now()) - Date.now(); 
-                            if (diff <= 0) cd.innerHTML = "Finishing..."; 
-                            else { 
-                                const h = Math.floor((diff % 86400000) / 3600000), m = Math.floor((diff % 3600000) / 60000), sec = Math.floor((diff % 60000) / 1000); 
-                                cd.innerHTML = `${h}:${m}:${sec}`; 
-                            } 
-                        };
+                        const runTimer = () => { const diff = (data.maint_end_ts || Date.now()) - Date.now(); if (diff <= 0) cd.innerHTML = "Finishing..."; else { const h = Math.floor((diff % 86400000) / 3600000), m = Math.floor((diff % 3600000) / 60000), sec = Math.floor((diff % 60000) / 1000); cd.innerHTML = `${h}:${m}:${sec}`; } };
                         runTimer(); maintInterval = setInterval(runTimer, 1000);
                     }
                 }
@@ -130,13 +110,20 @@ onValue(ref(db, 'settings'), (s) => {
     }
 });
 
-// --- GLOBAL ALERT FIX (LISTENER) ---
+function attemptShowNotice() {
+    if(!user || !userData) return; 
+    if(userData.status === 'pending' || userData.status === 'rejected' || userData.status === 'banned') return;
+    const popup = document.getElementById('notice-modal');
+    if(popup && globalNoticeData && globalNoticeData.active === true && globalNoticeData.text) {
+        document.getElementById('notice-text').innerText = globalNoticeData.text;
+        popup.style.display = 'flex';
+    }
+}
+window.closeNotice = () => { document.getElementById('notice-modal').style.display = 'none'; sessionStorage.setItem('noticeSeen', 'true'); };
+
 onValue(ref(db, 'settings/global_alert'), (s) => {
     const d = s.val();
     if (d && d.active && d.message) {
-        // Show Toast when a new alert is received
-        // To prevent it from showing on every reload if it's old, you could store timestamp. 
-        // For now, per request, it shows when active.
         const lastSeen = sessionStorage.getItem('last_alert_ts');
         if(String(d.timestamp) !== lastSeen) {
             window.showPremiumAlert("📢 Announcement", d.message);
@@ -144,8 +131,6 @@ onValue(ref(db, 'settings/global_alert'), (s) => {
         }
     }
 });
-
-window.closeNotice = () => { document.getElementById('notice-modal').style.display = 'none'; };
 
 onValue(ref(db, 'orders'), (s) => { let count = 0; s.forEach(() => { count++; }); realOrderCount = count; updateTotalDisplay(); });
 function updateTotalDisplay() {
@@ -163,44 +148,44 @@ document.body.insertAdjacentHTML('beforeend', sysHTML);
 onAuthStateChanged(auth, u => {
     const loader = document.getElementById('startup-loader');
     const navBar = document.querySelector('.bottom-nav');
-
-    if (!u && window.location.pathname.includes('services.html')) {
-        window.location.href = 'index.html';
-        return;
-    }
-
+    if (!u && window.location.pathname.includes('services.html')) { window.location.href = 'index.html'; return; }
     if (u) {
         user = u;
         onValue(ref(db, 'users/' + u.uid), s => {
             userData = s.val();
             if(!userData) { signOut(auth); return; }
-            if(userData.role === 'admin') { signOut(auth); alert("Admin access denied here."); return; }
-
+            if(userData.role === 'admin') { signOut(auth); alert("Admin access denied."); return; }
             startLiveNotifications(u.uid);
-            if (loader) loader.style.display = 'none';
-
-            if(userData.status === 'banned') { document.body.innerHTML = "<h1 style='color:red;text-align:center;margin-top:50px;'>ACCOUNT BANNED</h1>"; return; }
+            if (userData.status === 'rejected') {
+                if(loader) loader.style.display = 'none';
+                if(document.getElementById('auth-view')) document.getElementById('auth-view').style.display = 'none';
+                if(document.getElementById('main-view')) document.getElementById('main-view').style.display = 'none';
+                if(document.getElementById('pending-view')) document.getElementById('pending-view').style.display = 'none';
+                if(navBar) navBar.style.display = 'none';
+                const rejView = document.getElementById('rejected-view');
+                if(rejView) rejView.style.display = 'flex';
+                else document.body.innerHTML = "<h2 style='text-align:center; color:red; margin-top:50px;'>Account Rejected</h2>";
+                return;
+            }
+            if(userData.status === 'banned') { if(loader) loader.style.display = 'none'; document.body.innerHTML = "<h1 style='color:red;text-align:center;margin-top:50px;'>ACCOUNT BANNED</h1>"; return; }
             if(userData.status === 'pending') { 
+                if(loader) loader.style.display = 'none';
                 if(document.getElementById('pending-view')) document.getElementById('pending-view').style.display = 'flex'; 
                 if(document.getElementById('auth-view')) document.getElementById('auth-view').style.display='none'; 
+                if(document.getElementById('main-view')) document.getElementById('main-view').style.display='none'; 
                 if(navBar) navBar.style.display = 'none';
                 return; 
             }
-            
+            if (loader) loader.style.display = 'none';
             updateUserDataUI();
-            
+            attemptShowNotice(); 
             if(document.getElementById('auth-view')) document.getElementById('auth-view').style.display = 'none';
+            if(document.getElementById('pending-view')) document.getElementById('pending-view').style.display = 'none';
+            if(document.getElementById('rejected-view')) document.getElementById('rejected-view').style.display = 'none';
             if(navBar) navBar.style.display = 'flex';
-            
             const urlParams = new URLSearchParams(window.location.search);
             const tab = urlParams.get('tab');
-            
-            if(tab === 'profile') {
-                window.switchTab('profile', document.getElementById('nav-profile'));
-            } else {
-                if(document.getElementById('main-view')) document.getElementById('main-view').style.display = 'block';
-            }
-
+            if(tab === 'profile') { window.switchTab('profile', document.getElementById('nav-profile')); } else { if(document.getElementById('main-view')) document.getElementById('main-view').style.display = 'block'; }
             loadHistory(); 
             loadProfile();
         });
@@ -209,23 +194,17 @@ onAuthStateChanged(auth, u => {
         if(document.getElementById('auth-view')) document.getElementById('auth-view').style.display = 'flex'; 
         if(document.getElementById('main-view')) document.getElementById('main-view').style.display = 'none'; 
         if(document.getElementById('profile-view')) document.getElementById('profile-view').style.display = 'none';
+        if(document.getElementById('pending-view')) document.getElementById('pending-view').style.display = 'none';
+        if(document.getElementById('rejected-view')) document.getElementById('rejected-view').style.display = 'none';
         if(navBar) navBar.style.display = 'none';
     }
 });
 
 function updateUserDataUI() {
     const badgeHTML = userData.isVerified ? ' <i class="fas fa-check-circle verified-badge"></i>' : '';
-
-    if(document.getElementById('u-name')) {
-        document.getElementById('u-name').innerHTML = userData.name + badgeHTML;
-    }
-    if(document.getElementById('card-holder-name')) {
-        document.getElementById('card-holder-name').innerText = userData.name;
-    }
-    if(document.getElementById('p-name')) {
-        document.getElementById('p-name').innerHTML = userData.name + badgeHTML;
-    }
-    
+    if(document.getElementById('u-name')) document.getElementById('u-name').innerHTML = userData.name + badgeHTML;
+    if(document.getElementById('card-holder-name')) document.getElementById('card-holder-name').innerText = userData.name;
+    if(document.getElementById('p-name')) document.getElementById('p-name').innerHTML = userData.name + badgeHTML;
     if(document.getElementById('u-bal')) document.getElementById('u-bal').innerText = userData.balance || 0;
     if(document.getElementById('p-phone')) document.getElementById('p-phone').innerText = userData.phone;
 }
@@ -235,19 +214,8 @@ window.switchTab = (tab, el) => {
     views.forEach(v => { const elem = document.getElementById(v); if(elem) elem.style.display = 'none'; });
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active')); 
     if(el) el.classList.add('active'); 
-    
-    if(tab === 'home') {
-        if(document.getElementById('main-view')) document.getElementById('main-view').style.display = 'block'; 
-        if(window.location.pathname.includes('services.html')) window.location.href = 'index.html';
-    } 
-    else if(tab === 'profile') {
-        if(document.getElementById('profile-view')) {
-            document.getElementById('profile-view').style.display = 'block'; 
-            loadProfile();
-        } else {
-            window.location.href = 'index.html?tab=profile';
-        }
-    }
+    if(tab === 'home') { if(document.getElementById('main-view')) document.getElementById('main-view').style.display = 'block'; if(window.location.pathname.includes('services.html')) window.location.href = 'index.html'; } 
+    else if(tab === 'profile') { if(document.getElementById('profile-view')) { document.getElementById('profile-view').style.display = 'block'; loadProfile(); } else { window.location.href = 'index.html?tab=profile'; } }
 };
 
 window.toggleAuth = () => {
@@ -258,38 +226,22 @@ window.toggleAuth = () => {
 };
 window.acceptDisclaimer = () => { document.getElementById('reg-disclaimer-modal').style.display = 'none'; document.getElementById('auth-form-container').style.display = 'block'; document.getElementById('reg-fields').style.display = 'block'; document.getElementById('auth-btn').innerText = "REGISTER"; document.getElementById('auth-switch-text').innerText = "Already have an account? Login"; };
 
-// --- AUTH ACTION ---
 window.authAction = async () => {
     const btn = document.getElementById('auth-btn'); const e = document.getElementById('email').value, p = document.getElementById('pass').value;
     const isReg = document.getElementById('reg-fields').style.display === 'block';
     if(!e || !p) return window.showPremiumAlert("Error", "Enter details", true);
-    
     btn.innerHTML = '<span class="spinner"></span>'; btn.disabled = true;
     try {
         if(isReg) {
             const n = document.getElementById('r-name').value;
             const ph = document.getElementById('r-phone').value;
             const tg = document.getElementById('r-telegram').value; 
-
             if(!n || !ph || !tg) throw new Error("Name, Phone & Telegram required");
-            
             const c = await createUserWithEmailAndPassword(auth, e, p);
-            
-            await set(ref(db, 'users/'+c.user.uid), { 
-                name: n, 
-                phone: ph, 
-                telegram: tg, 
-                email: e, 
-                role: 'user', 
-                status: 'pending', 
-                balance: 0, 
-                joined_at: Date.now() 
-            });
+            await set(ref(db, 'users/'+c.user.uid), { name: n, phone: ph, telegram: tg, email: e, role: 'user', status: 'pending', balance: 0, joined_at: Date.now() });
             window.showPremiumAlert("Success", "Registered! Wait for approval.");
             setTimeout(() => window.location.reload(), 2000);
-        } else {
-            await signInWithEmailAndPassword(auth, e, p); 
-        }
+        } else { await signInWithEmailAndPassword(auth, e, p); }
     } catch(err) { window.showPremiumAlert("Failed", err.message, true); } 
     finally { btn.innerHTML = isReg ? 'REGISTER' : 'LOGIN'; btn.disabled = false; }
 };
@@ -303,22 +255,9 @@ function loadHistory() {
         list.innerHTML = ""; 
         let t=0, c=0, x=0; 
         const allOrders = [];
-        
-        s.forEach(o => { 
-            const v = o.val(); 
-            if(v.userId === user.uid) { 
-                v.key = o.key;
-                allOrders.push(v);
-                t++; 
-                if(v.status==='completed') c++; 
-                if(v.status==='cancelled') x++; 
-            } 
-        }); 
-
+        s.forEach(o => { const v = o.val(); if(v.userId === user.uid) { v.key = o.key; allOrders.push(v); t++; if(v.status==='completed') c++; if(v.status==='cancelled') x++; } }); 
         allOrders.sort((a,b) => b.timestamp - a.timestamp);
-
         if(allOrders.length === 0) { list.innerHTML = '<p style="text-align:center; font-size:12px; color:var(--text-muted)">No orders yet.</p>'; }
-
         allOrders.forEach(v => {
             let isExpired = false;
             if(v.status === 'completed' && v.completed_at) { if((Date.now() - v.completed_at) > 86400000) isExpired = true; }
@@ -327,12 +266,7 @@ function loadHistory() {
             let noteHTML = (v.status === 'cancelled' && v.admin_note) ? `<div style="font-size:11px; color:#ef4444; background:#fef2f2; padding:5px; border-radius:4px; margin-top:5px;">Reason: ${v.admin_note}</div>` : ""; 
             list.innerHTML += `<div class="order-card"><div class="order-top"><b style="font-size:14px; color:var(--text);">${v.service}</b>${chatBtn}</div><div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--text-muted);"><span>#${v.orderId_visible}</span><span class="status-badge" style="color:${clr}; background:${clr}15;">${v.status.toUpperCase()}</span></div>${noteHTML}<div style="font-size:10px; color:var(--text-muted); text-align:right;">${new Date(v.timestamp).toLocaleDateString()}</div></div>`; 
         });
-        
-        if(document.getElementById('stat-total')) { 
-            document.getElementById('stat-total').innerText = t; 
-            document.getElementById('stat-comp').innerText = c; 
-            document.getElementById('stat-cancel').innerText = x; 
-        } 
+        if(document.getElementById('stat-total')) { document.getElementById('stat-total').innerText = t; document.getElementById('stat-comp').innerText = c; document.getElementById('stat-cancel').innerText = x; } 
     }); 
 }
 
@@ -342,17 +276,14 @@ function loadProfile() {
         if(!l) return; 
         l.innerHTML = ""; 
         let found = false;
-        
         const reqs = [];
         s.forEach(r => { const d = r.val(); if(d.uid === user.uid) { d.key=r.key; reqs.push(d); found = true; } });
         reqs.sort((a,b) => b.timestamp - a.timestamp);
-
         reqs.forEach(d => {
             let clr = d.status==='approved'?'#10b981':(d.status==='rejected'?'#ef4444':'#f59e0b'); 
             let note = d.status==='rejected' ? `<div style="font-size:10px; color:#ef4444; margin-top:5px;">${d.reject_reason || 'Rejected'}</div>` : ''; 
             l.innerHTML += `<div class="hist-card" style="flex-direction:column; align-items:flex-start;"><div style="display:flex; justify-content:space-between; width:100%; align-items:center;"><div><div style="font-weight:600; font-size:13px; color:var(--text);">৳ ${d.amount}</div><div style="font-size:10px; color:var(--text-muted);">${d.trxId}</div></div><span class="status-badge" style="color:${clr}; background:${clr}15;">${d.status}</span></div>${note}</div>`;
         });
-
         if(!found) l.innerHTML = `<p style="text-align:center; color:var(--text-muted); font-size:12px;">No deposit history found.</p>`;
     }); 
 }
@@ -392,14 +323,22 @@ function renderCategories() {
     });
 }
 
-function renderServiceGrid() {
+// --- UPDATED RENDER GRID FOR SEARCH ---
+window.renderServiceGrid = () => {
     const grid = document.getElementById('dynamic-services-grid');
     if(!grid) return;
+    
+    // Search logic
+    const searchInput = document.getElementById('search-inp');
+    const query = searchInput ? searchInput.value.toLowerCase() : "";
+
     grid.innerHTML = "";
     let hasService = false;
     Object.entries(globalServices).forEach(([key, svc]) => {
         const isCatMatch = activeCategory === "All" || (svc.category || "Others") === activeCategory;
-        if (isCatMatch) {
+        const isSearchMatch = svc.name.toLowerCase().includes(query);
+
+        if (isCatMatch && isSearchMatch) {
             hasService = true;
             const isAvailable = svc.active !== false;
             const statusHTML = !isAvailable ? '<div class="svc-status-badge">Unavailable</div>' : '';
@@ -410,14 +349,19 @@ function renderServiceGrid() {
             grid.innerHTML += `<div class="${cardClass}" onclick="${clickAction}">${statusHTML}<div class="svc-icon" style="background:${rndColor}"><i class="${svc.icon}"></i></div><b style="font-size:13px;">${svc.name}</b><br><span class="svc-price">৳ ${svc.price}</span></div>`;
         }
     });
-    if(!hasService) grid.innerHTML = `<div style="grid-column: span 2; text-align: center; color:var(--text-muted); padding:20px;">No services found in this category.</div>`;
-}
+    if(!hasService) {
+        grid.innerHTML = `<div style="grid-column: span 2; text-align: center; color:var(--text-muted); padding:20px;">
+            <i class="fas fa-search" style="font-size:30px; margin-bottom:10px; opacity:0.5;"></i><br>
+            No services found matching "${query}"
+        </div>`;
+    }
+};
 
 window.filterServices = (cat, el) => {
     activeCategory = cat;
     document.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
     el.classList.add('active');
-    renderServiceGrid();
+    window.renderServiceGrid(); // Call updated function
 };
 
 window.openOrder = (key) => {
@@ -502,26 +446,17 @@ window.confirmOrder = () => {
         if(res.committed) { 
             const shortId = Math.floor(100000 + Math.random() * 900000).toString(); 
             const newOrderRef = push(ref(db, 'orders')); 
-            
-            // 1. Order Data
             await set(newOrderRef, { userId: user.uid, uName: userData.name, service: globalServices[curSvcKey].name, cost: curFinalPrice, details: details, file: "", status: 'pending', timestamp: Date.now(), orderId_visible: shortId }); 
-            
             window.showPremiumAlert("Success", "Order Placed!"); 
-
-            // 2. System Msg
             await push(ref(db, 'chats/'+newOrderRef.key), {s:'sys', t:`Order Placed. ID: ${shortId}`});
-            
-            // 3. AUTO REPLY
             const autoMsg = "আপনার অর্ডার অ্যাডমিন প্যানেলে সাবমিট হয়েছে। একজন অ্যাডমিন শীঘ্রই আপনার সাথে কথা বলবেন। ততক্ষণ চ্যাট বক্সে থাকুন। ধন্যবাদ।";
             await push(ref(db, 'chats/'+newOrderRef.key), {s:'admin', t: autoMsg});
-
             document.getElementById('ord-modal').style.display='none'; 
             window.openChat(newOrderRef.key, shortId); 
         } else { window.showPremiumAlert("Failed", "Insufficient Balance!", true); } 
     });
 };
 
-// --- CHAT SYSTEM ---
 window.openChat = (k, id) => { 
     const chatModal = document.getElementById('chat-modal');
     if(!chatModal) return;
@@ -535,37 +470,26 @@ window.openChat = (k, id) => {
     
     orderStatusListener = onValue(ref(db, 'orders/' + k), (s) => { 
         const data = s.val(); if(!data) return; const status = data.status; 
-        
         if (status === 'cancelled') { window.closeChatModal(); return; } 
         if (chatTimerInterval) clearInterval(chatTimerInterval); 
-        
-        if (status === 'pending') { 
-            inp.style.display = 'flex'; 
-            cls.style.display = 'none'; 
-        } 
-        else if (status === 'processing') { 
-            inp.style.display = 'none'; 
-            cls.style.display = 'block'; 
-            cls.className = 'chat-closed-ui processing'; 
-            cls.innerHTML = '<i class="fas fa-lock"></i> অর্ডার প্রসেসিং এ আছে। চ্যাট বন্ধ।'; 
-        } 
-        else if (status === 'completed') { 
-            inp.style.display = 'none'; 
-            cls.style.display = 'block'; 
-            cls.className = 'chat-closed-ui'; 
-            const updateTimer = () => { const diff = 86400000 - (Date.now() - (data.completed_at || 0)); if (diff <= 0) { clearInterval(chatTimerInterval); chatModal.style.display='none'; } else { const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)); cls.innerHTML = `<i class="fas fa-history"></i> Chat expiring in: ${h}h`; } }; 
-            updateTimer(); chatTimerInterval = setInterval(updateTimer, 60000);
-        } 
+        if (status === 'pending') { inp.style.display = 'flex'; cls.style.display = 'none'; } 
+        else if (status === 'processing') { inp.style.display = 'none'; cls.style.display = 'block'; cls.className = 'chat-closed-ui processing'; cls.innerHTML = '<i class="fas fa-lock"></i> অর্ডার প্রসেসিং এ আছে। চ্যাট বন্ধ।'; } 
+        else if (status === 'completed') { inp.style.display = 'none'; cls.style.display = 'block'; cls.className = 'chat-closed-ui'; const updateTimer = () => { const diff = 86400000 - (Date.now() - (data.completed_at || 0)); if (diff <= 0) { clearInterval(chatTimerInterval); chatModal.style.display='none'; } else { const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)); cls.innerHTML = `<i class="fas fa-history"></i> Chat expiring in: ${h}h`; } }; updateTimer(); chatTimerInterval = setInterval(updateTimer, 60000); } 
     }); 
 
     onValue(ref(db, 'chats/'+k), s => { 
         const b = document.getElementById('chat-box'); b.innerHTML=""; 
         s.forEach(c => { 
             const m=c.val(); 
-            // Copy Icon
+            const linkify = (text) => {
+                const urlRegex = /(https?:\/\/[^\s]+)/g;
+                return text.replace(urlRegex, function(url) {
+                    return `<a href="${url}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:inherit; text-decoration:underline; font-weight:bold; word-break: break-all;">${url}</a>`;
+                });
+            };
+            const msgContent = linkify(m.t);
             const copyIcon = `<i class="fas fa-copy copy-btn-icon" onclick="event.stopPropagation(); window.copyText('${m.t.replace(/'/g, "\\'")}')"></i>`;
-            
-            b.innerHTML += `<div class="msg-row ${m.s===user.uid?'me':'adm'}"><div class="msg ${m.s===user.uid?'msg-me':'msg-adm'}"><span>${m.t}</span>${copyIcon}</div></div>`; 
+            b.innerHTML += `<div class="msg-row ${m.s===user.uid?'me':'adm'}"><div class="msg ${m.s===user.uid?'msg-me':'msg-adm'}"><span>${msgContent}</span>${copyIcon}</div></div>`; 
         }); 
         b.scrollTop = b.scrollHeight; 
     }); 
@@ -573,3 +497,31 @@ window.openChat = (k, id) => {
 
 window.sendMsg = () => { const t = document.getElementById('chat-in').value; if(t && activeChat) { push(ref(db, 'chats/'+activeChat), {s:user.uid, t:t}); document.getElementById('chat-in').value=""; } };
 window.closeChatModal = () => { document.getElementById('chat-modal').style.display='none'; if (chatTimerInterval) clearInterval(chatTimerInterval); if(orderStatusListener) off(orderStatusListener); };
+
+// ================= SECURITY MODULE =================
+
+// 1. Disable Right Click
+document.addEventListener('contextmenu', event => event.preventDefault());
+
+// 2. Disable Keyboard Shortcuts (F12, Ctrl+U, etc)
+document.onkeydown = function(e) {
+    if (e.keyCode === 123 || (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) || (e.ctrlKey && e.keyCode === 85)) {
+        return false;
+    }
+};
+
+// 3. Anti-Screenshot / Blur on Focus Loss
+window.addEventListener('blur', () => {
+    document.body.classList.add('blur-mode');
+    document.title = "⚠️ Security Alert";
+});
+
+window.addEventListener('focus', () => {
+    document.body.classList.remove('blur-mode');
+    document.title = "Siͥleͣnͫt Cyber Raid Portal";
+});
+
+// 4. Disable Dragging Images
+document.querySelectorAll('img').forEach(img => {
+    img.addEventListener('dragstart', e => e.preventDefault());
+});
